@@ -58,11 +58,11 @@
     </div>
   </div>
 
-  <div id="hint">キャラをドラッグで移動・上へドラッグでジャンプ ／ 上半身タップ=パンチ・下半身タップ=下段キック</div>
+  <div id="hint">画面をドラッグで移動・上へドラッグでジャンプ ／ 軽くタップ:上=パンチ・下=下段キック</div>
 
   <div id="overlay">
     <h1>FIGHT ARENA</h1>
-    <p>P1(青)本体をドラッグしてその方向に移動。<br>上方向にドラッグするとジャンプ(2段可)。<br>キャラの上半身を軽くタップ=パンチ、下半身を軽くタップ=下段キック。<br>下段キックは相手が地上にいる時だけ当たる代わりに、大きく吹っ飛ばさず横に払う。<br>お互いの体はすり抜けられない壁。反対側に回り込むには、ジャンプで相手の頭上を飛び越えよう。<br>相手を吹っ飛ばしてKOしよう(左右の場外のみ)。<br>ストック3つを先に失った方が負け。</p>
+    <p>画面をドラッグして左右に移動(指を右/左にスライド)。<br>上方向にドラッグするとジャンプ(2段可)。<br>自分のキャラより上をタップ=パンチ、下をタップ=下段キック。<br>下段キックは相手が地上にいる時だけ当たる代わりに、大きく吹っ飛ばさず横に払う。<br>お互いの体はすり抜けられない壁。反対側に回り込むには、ジャンプで相手の頭上を飛び越えよう。<br>相手を吹っ飛ばしてKOしよう(左右の場外のみ)。<br>ストック3つを先に失った方が負け。</p>
     <button class="startBtn" id="startBtn">スタート</button>
   </div>
 </div>
@@ -127,19 +127,17 @@ function updateHUD() {
   document.getElementById('p2stocks').textContent = '●'.repeat(Math.max(p2.stocks,0));
 }
 
-// ---- drag-the-character-to-move + tap-to-attack input ----
-const keys = { jump:false, attack:false };
-let isDraggingCharacter = false;
-let dragOffsetX = 0;
+// ---- screen-drag-to-move + tap-to-attack input ----
+const keys = { left:false, right:false, attack:false };
 let dragActive = false;
+let dragOriginX = 0;
 let dragStartX = 0, dragStartY = 0, dragStartTime = 0;
 let dragTotalDist = 0;
-let pendingDragX = null;
 let queuedAttackType = 'punch';
 let dragJumpTier = 0;
 const TAP_DIST = 14;
 const TAP_TIME = 280;
-const GRAB_PAD = 26; // タップしやすいように当たり判定を少し広げる
+const DEADZONE = 12;
 const JUMP_DRAG_STEP = 32; // 上方向にこの距離ドラッグするごとにジャンプ1回分
 
 function doJump(f) {
@@ -157,60 +155,51 @@ function getPos(e) {
   return { x: t.clientX - rect.left, y: t.clientY - rect.top };
 }
 
-function isOnCharacter(p, f) {
-  return p.x > f.x - f.w/2 - GRAB_PAD && p.x < f.x + f.w/2 + GRAB_PAD &&
-         p.y > f.y - f.h/2 - GRAB_PAD && p.y < f.y + f.h/2 + GRAB_PAD;
-}
-
 function decideAttackType(p, f) {
-  // f.y はキャラ中心。中心より上をタップ=パンチ、下をタップ=下段キック
+  // f.y はキャラ中心。タップ位置がキャラの中心より上ならパンチ、下なら下段キック
   return p.y < f.y ? 'punch' : 'lowkick';
 }
 
 function onDragStart(e) {
   const p = getPos(e);
   dragActive = true;
+  dragOriginX = p.x;
   dragStartX = p.x; dragStartY = p.y;
   dragStartTime = performance.now();
   dragTotalDist = 0;
   dragJumpTier = 0;
-  if (p1 && isOnCharacter(p, p1)) {
-    isDraggingCharacter = true;
-    dragOffsetX = p.x - p1.x;
-    pendingDragX = p1.x;
-    queuedAttackType = decideAttackType(p, p1);
-  } else {
-    isDraggingCharacter = false;
-    pendingDragX = null;
-    queuedAttackType = 'punch';
-  }
   e.preventDefault();
 }
 function onDragMove(e) {
   if (!dragActive) return;
   const p = getPos(e);
   dragTotalDist = Math.max(dragTotalDist, Math.hypot(p.x-dragStartX, p.y-dragStartY));
-  if (isDraggingCharacter) {
-    pendingDragX = p.x - dragOffsetX;
-    // 上方向へのドラッグ量に応じてジャンプを発生させる(最大2段、斜め方向でも反応)
-    const upDist = dragStartY - p.y;
-    const tier = Math.min(2, Math.floor(upDist / JUMP_DRAG_STEP));
-    if (tier > dragJumpTier) {
-      for (let i = dragJumpTier; i < tier; i++) doJump(p1);
-      dragJumpTier = tier;
-    }
+
+  // 横方向: 起点からの距離で左右移動
+  const dx = p.x - dragOriginX;
+  if (dx > DEADZONE) { keys.right = true; keys.left = false; }
+  else if (dx < -DEADZONE) { keys.left = true; keys.right = false; }
+  else { keys.left = false; keys.right = false; }
+
+  // 縦方向: 上にドラッグした量に応じてジャンプ(最大2段、斜めでも反応)
+  const upDist = dragStartY - p.y;
+  const tier = Math.min(2, Math.floor(upDist / JUMP_DRAG_STEP));
+  if (tier > dragJumpTier) {
+    for (let i = dragJumpTier; i < tier; i++) doJump(p1);
+    dragJumpTier = tier;
   }
   e.preventDefault();
 }
 function onDragEnd(e) {
   if (!dragActive) return;
+  const p = getPos(e);
   const elapsed = performance.now() - dragStartTime;
   if (dragTotalDist < TAP_DIST && elapsed < TAP_TIME) {
+    queuedAttackType = p1 ? decideAttackType(p, p1) : 'punch';
     keys.attack = true;
     setTimeout(()=>{ keys.attack = false; }, 60);
   }
-  isDraggingCharacter = false;
-  pendingDragX = null;
+  keys.left = false; keys.right = false;
   dragActive = false;
   e.preventDefault();
 }
@@ -222,7 +211,6 @@ canvas.addEventListener('mousedown', onDragStart);
 window.addEventListener('mousemove', (e)=>{ if(dragActive) onDragMove(e); });
 window.addEventListener('mouseup', (e)=>{ if(dragActive) onDragEnd(e); });
 
-let jumpPressedLast = false;
 let attackPressedLast = false;
 
 function respawn(f) {
@@ -270,16 +258,6 @@ function physics(f, input, opponent) {
   } else if (input) {
     if (input.left) { f.vx -= 0.9; f.facing=-1; }
     if (input.right) { f.vx += 0.9; f.facing=1; }
-    if (input.dragX != null) {
-      const desired = Math.max(f.w/2, Math.min(W-f.w/2, input.dragX));
-      const maxStep = 9; // すり抜け防止: 1フレームでの最大移動量
-      const diff = desired - f.x;
-      const step = Math.max(-maxStep, Math.min(maxStep, diff));
-      if (step > 0.3) f.facing = 1;
-      else if (step < -0.3) f.facing = -1;
-      f.x += step;
-      f.vx = 0;
-    }
     if (input.jumpPress && f.jumps>0) {
       f.vy = -11;
       f.jumps--;
@@ -416,12 +394,11 @@ function update() {
   }
 
   const p1input = {
-    dragX: pendingDragX,
-    jumpPress: keys.jump && !jumpPressedLast,
+    left: keys.left,
+    right: keys.right,
     attackPress: keys.attack && !attackPressedLast,
     attackType: queuedAttackType
   };
-  jumpPressedLast = keys.jump;
   attackPressedLast = keys.attack;
 
   const p2input = cpuInput(p2, p1);
